@@ -1,0 +1,28 @@
+{
+  "final_train_loss": 0.08647603508498934,
+  "final_val_loss": 0.07467008382081985,
+  "final_val_mae": 14.207422256469727,
+  "best_val_mae": 14.169487953186035,
+  "total_epochs": 40,
+  "config": {
+    "TEST_MODE": false,
+    "DATASET_NAME": "coco-2017-rotated",
+    "MODEL_PATH": "rotation_model_best.pth",
+    "CHECKPOINT_DIR": "checkpoints",
+    "UNFROZEN_LAYERS": [
+      "layer4",
+      "fc"
+    ],
+    "LEARNING_RATE": 0.001,
+    "WEIGHT_DECAY": 0.0001,
+    "DEVICE": "cuda",
+    "NUM_WORKERS": 0,
+    "VIZ_DIR": "visualizations",
+    "EARLY_STOPPING_PATIENCE": 5,
+    "MIN_DELTA": 0.01,
+    "GRADIENT_CLIP": 1.0,
+    "BATCH_SIZE": 1024,
+    "NUM_EPOCHS": 50,
+    "GRAD_CAM_COUNT": 10
+  }
+}

@@ -179,15 +179,6 @@ print(f"Predicted rotation: {angle.item():.2f} degrees")
 
 ---
 
-## Planned enhancements
-
-- Add uncertainty estimation via Monte Carlo dropout or an auxiliary confidence head.
-- Explore rotation-invariant features and equivariant architectures.
-- Provide a real-time video demo and a mobile-targeted backbone.
-- Extend to 3D orientation prediction \((\text{roll},\text{pitch},\text{yaw})\) for camera frames.
-
----
-
 ## License and acknowledgments
 
 MIT License. Built with PyTorch, torchvision, and FiftyOne on a COCO-2017 subset. Thanks to the maintainers of these projects for enabling fast prototyping at scale.

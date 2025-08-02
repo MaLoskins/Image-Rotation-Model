@@ -19,6 +19,7 @@ import shutil
 import json
 from typing import Tuple, Dict, List, Optional
 import warnings
+from tqdm import tqdm
 warnings.filterwarnings('ignore', category=UserWarning)
 
 # --- Configuration ---
@@ -416,13 +417,17 @@ def trig_to_deg(tensor: torch.Tensor) -> torch.Tensor:
 
 
 def train_one_epoch(model: nn.Module, dataloader: DataLoader, criterion: nn.Module,
-                   optimizer: optim.Optimizer, device: str, 
+                   optimizer: optim.Optimizer, device: str, epoch: int, 
                    gradient_clip: float = 1.0) -> float:
-    """Train for one epoch with gradient clipping."""
+    """Train for one epoch with gradient clipping and progress bar."""
     model.train()
     running_loss = 0.0
     
-    for images, labels, _ in dataloader:
+    # Create progress bar with custom description
+    pbar = tqdm(dataloader, desc=f'Training Epoch {epoch}', 
+                unit='batch', leave=True, position=0)
+    
+    for batch_idx, (images, labels, _) in enumerate(pbar):
         images, labels = images.to(device), labels.to(device)
         
         # Forward pass
@@ -435,20 +440,29 @@ def train_one_epoch(model: nn.Module, dataloader: DataLoader, criterion: nn.Modu
         torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clip)
         optimizer.step()
         
+        # Update running loss
         running_loss += loss.item() * images.size(0)
+        
+        # Update progress bar
+        avg_loss = running_loss / ((batch_idx + 1) * images.size(0))
+        pbar.set_postfix({'loss': f'{loss.item():.4f}', 'avg_loss': f'{avg_loss:.4f}'})
     
     return running_loss / len(dataloader.dataset)
 
 
 def evaluate(model: nn.Module, dataloader: DataLoader, criterion: nn.Module, 
-            device: str) -> Tuple[float, float, np.ndarray, np.ndarray]:
-    """Evaluate model on validation set."""
+            device: str, epoch: int) -> Tuple[float, float, np.ndarray, np.ndarray]:
+    """Evaluate model on validation set with progress bar."""
     model.eval()
     running_loss = 0.0
     all_true_deg, all_pred_deg = [], []
     
+    # Create progress bar
+    pbar = tqdm(dataloader, desc=f'Validation Epoch {epoch}', 
+                unit='batch', leave=True, position=0)
+    
     with torch.no_grad():
-        for images, labels, _ in dataloader:
+        for batch_idx, (images, labels, _) in enumerate(pbar):
             images, labels = images.to(device), labels.to(device)
             
             # Forward pass
@@ -462,6 +476,10 @@ def evaluate(model: nn.Module, dataloader: DataLoader, criterion: nn.Module,
             
             all_true_deg.append(true_deg.cpu().numpy())
             all_pred_deg.append(pred_deg.cpu().numpy())
+            
+            # Update progress bar
+            avg_loss = running_loss / ((batch_idx + 1) * images.size(0))
+            pbar.set_postfix({'loss': f'{loss.item():.4f}', 'avg_loss': f'{avg_loss:.4f}'})
     
     # Concatenate all predictions
     all_true_deg = np.concatenate(all_true_deg)
@@ -535,16 +553,21 @@ def run_training(model: nn.Module, train_loader: DataLoader, val_loader: DataLoa
     print("\n--- Starting Training ---")
     print(f"Device: {device}")
     print(f"Trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
+    print(f"Total batches per epoch: {len(train_loader)}")
     
     for epoch in range(config["NUM_EPOCHS"]):
+        print(f"\n{'='*60}")
+        print(f"Epoch {epoch+1}/{config['NUM_EPOCHS']}")
+        print(f"{'='*60}")
+        
         # Training
         train_loss = train_one_epoch(
-            model, train_loader, criterion, optimizer, device, 
+            model, train_loader, criterion, optimizer, device, epoch+1,
             config["GRADIENT_CLIP"]
         )
         
         # Validation
-        val_loss, val_mae, _, _ = evaluate(model, val_loader, criterion, device)
+        val_loss, val_mae, _, _ = evaluate(model, val_loader, criterion, device, epoch+1)
         
         # Record history
         current_lr = optimizer.param_groups[0]['lr']
@@ -553,10 +576,12 @@ def run_training(model: nn.Module, train_loader: DataLoader, val_loader: DataLoa
         history['val_mae'].append(val_mae)
         history['lr'].append(current_lr)
         
-        # Print progress
-        print(f"Epoch {epoch+1:02d}/{config['NUM_EPOCHS']} | "
-              f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | "
-              f"Val MAE: {val_mae:.2f}° | LR: {current_lr:.6f}")
+        # Print epoch summary
+        print(f"\nEpoch Summary:")
+        print(f"  Train Loss: {train_loss:.4f}")
+        print(f"  Val Loss: {val_loss:.4f}")
+        print(f"  Val MAE: {val_mae:.2f}°")
+        print(f"  Learning Rate: {current_lr:.6f}")
         
         # Save best model
         if val_mae < best_mae:
@@ -570,7 +595,7 @@ def run_training(model: nn.Module, train_loader: DataLoader, val_loader: DataLoa
                 'best_mae': best_mae,
                 'config': config_to_save
             }, config["MODEL_PATH"])
-            print(f"  -> New best model saved with MAE: {best_mae:.2f}°")
+            print(f"  ✓ New best model saved with MAE: {best_mae:.2f}°")
         
         # Save checkpoint
         if (epoch + 1) % 5 == 0:
@@ -587,10 +612,10 @@ def run_training(model: nn.Module, train_loader: DataLoader, val_loader: DataLoa
         
         # Early stopping
         if early_stopping(val_mae):
-            print(f"\nEarly stopping triggered at epoch {epoch+1}")
+            print(f"\n⚠️  Early stopping triggered at epoch {epoch+1}")
             break
     
-    print(f"\nTraining complete. Best model saved with MAE: {best_mae:.2f}°")
+    print(f"\n✓ Training complete. Best model saved with MAE: {best_mae:.2f}°")
     return history
 
 
@@ -613,14 +638,15 @@ def generate_visualizations(model: nn.Module, val_loader: DataLoader,
     
     # 2. Error analysis
     criterion = nn.MSELoss()  # Use standard MSE loss
-    _, _, true_angles, pred_angles = evaluate(model, val_loader, criterion, device)
+    print("\nAnalyzing model performance...")
+    _, _, true_angles, pred_angles = evaluate(model, val_loader, criterion, device, epoch=0)
     
     if len(true_angles) > 0:
         plot_error_analysis(true_angles, pred_angles, viz_dir / "error_analysis.png")
     
     # 3. Grad-CAM visualizations
     if len(val_loader.dataset) > 0:
-        print("Generating Grad-CAM heatmaps...")
+        print("\nGenerating Grad-CAM heatmaps...")
         grad_cam = GradCAM(model, target_layer=model.layer4[-1])
         
         gradcam_images = []
@@ -629,7 +655,11 @@ def generate_visualizations(model: nn.Module, val_loader: DataLoader,
         # Sample diverse angles
         angle_bins = np.linspace(0, 360, config["GRAD_CAM_COUNT"] + 1)
         
-        for i in range(min(config["GRAD_CAM_COUNT"], len(val_loader.dataset))):
+        # Create progress bar for GradCAM generation
+        pbar = tqdm(range(min(config["GRAD_CAM_COUNT"], len(val_loader.dataset))), 
+                   desc="Generating GradCAM", unit="image")
+        
+        for i in pbar:
             # Try to get samples from different angle ranges
             target_angle = (angle_bins[i] + angle_bins[i+1]) / 2
             
@@ -680,7 +710,7 @@ def generate_visualizations(model: nn.Module, val_loader: DataLoader,
                 cols=min(3, len(gradcam_images))
             )
     
-    print(f"All visualizations saved to '{viz_dir}'")
+    print(f"\n✓ All visualizations saved to '{viz_dir}'")
     
     # 4. Save training summary
     config_to_save = {k: str(v) if isinstance(v, Path) else v for k, v in config.items()}
@@ -730,7 +760,9 @@ def main():
     
     # Print summary
     total_time = time.time() - start_time
-    print(f"\n--- Training Summary ---")
+    print(f"\n{'='*60}")
+    print(f"--- Training Summary ---")
+    print(f"{'='*60}")
     print(f"Total execution time: {total_time:.2f} seconds ({total_time/60:.1f} minutes)")
     print(f"Final validation MAE: {history['val_mae'][-1]:.2f}°")
     print(f"Best validation MAE: {min(history['val_mae']):.2f}°")

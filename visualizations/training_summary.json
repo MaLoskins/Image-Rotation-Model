@@ -1,9 +1,9 @@
 {
-  "final_train_loss": 0.08647603508498934,
-  "final_val_loss": 0.07467008382081985,
-  "final_val_mae": 14.207422256469727,
-  "best_val_mae": 14.169487953186035,
-  "total_epochs": 40,
+  "final_train_loss": 0.00486326740651933,
+  "final_val_loss": 0.019916065390206534,
+  "final_val_mae": 4.572145462036133,
+  "best_val_mae": 4.572145462036133,
+  "total_epochs": 47,
   "config": {
     "TEST_MODE": false,
     "DATASET_NAME": "coco-2017-rotated",

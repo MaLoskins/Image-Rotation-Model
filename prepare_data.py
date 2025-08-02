@@ -14,16 +14,16 @@ import json
 # --- Configuration ---
 CONFIG = {
     "TEST_MODE": False,
-    "SOURCE_DATASET_NAME": "coco-2017-train-20000",
+    "SOURCE_DATASET_NAME": "coco-2017-train-30000",
     "FINAL_DATASET_NAME": "coco-2017-rotated",
     "PADDING_STRATEGY": 'reflect',  # Options: 'crop', 'reflect', 'random_bg', 'alpha_mask'
     "ANGLE_RANGE": (0, 360),  # Now includes full range
     "NUM_WORKERS": min(os.cpu_count() or 1, 8),  # Cap at 8 workers
     "QUALITY": 95,  # JPEG quality (when not using alpha_mask)
-    "BATCH_SIZE": 100,  # Process samples in batches to manage memory
+    "BATCH_SIZE": 1000,  # Process samples in batches to manage memory
 }
 CONFIG.update({
-    "SOURCE_MAX_SAMPLES": 5 if CONFIG["TEST_MODE"] else 1000,
+    "SOURCE_MAX_SAMPLES": 5 if CONFIG["TEST_MODE"] else 30000,
     "NUM_ROTATIONS_PER_IMAGE": 2 if CONFIG["TEST_MODE"] else 6,
 })
 

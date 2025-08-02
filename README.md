@@ -1,350 +1,241 @@
-# Rotation Detection Neural Network
+# Image Rotation Regression on COCO-2017
 
-A deep learning system that accurately predicts the rotation angle of images using a modified ResNet18 architecture with trigonometric output representation. Achieves state-of-the-art performance with a mean absolute error of just 4.57°.
+A compact, production-minded pipeline for estimating the absolute rotation of natural images over the full range from 0 to 360 degrees. The model is a ResNet18 backbone with a trigonometric two-dimensional head that predicts the pair \((\cos\theta, \sin\theta)\). Trained on a large, synthetically rotated subset of COCO-2017, it reaches a validation mean absolute error of approximately \(4.57^\circ\) with strong coverage across angle ranges. The repository includes reproducible data generation, training, evaluation, and interpretability visualizations.
 
-## Architecture Overview
+---
 
-```mermaid
-flowchart TB
-    subgraph Input["INPUT LAYER"]
-        style Input fill:#e3f2fd,stroke:#1976d2,stroke-width:3px,color:#000
-        I[Image<br/>3×224×224]
-        style I fill:#2196f3,stroke:#1565c0,color:#fff
-    end
-    
-    subgraph Conv1["CONV BLOCK 1"]
-        style Conv1 fill:#e8f5e9,stroke:#66bb6a,stroke-width:2px,color:#000
-        C1[Conv 7×7<br/>64 filters<br/>stride 2]
-        BN1[BatchNorm]
-        R1[ReLU]
-        MP1[MaxPool 3×3<br/>stride 2]
-        
-        style C1 fill:#81c784,stroke:#4caf50,color:#000
-        style BN1 fill:#a5d6a7,stroke:#66bb6a,color:#000
-        style R1 fill:#c8e6c9,stroke:#81c784,color:#000
-        style MP1 fill:#81c784,stroke:#4caf50,color:#000
-    end
-    
-    subgraph Layer1["LAYER 1"]
-        style Layer1 fill:#e8f5e9,stroke:#66bb6a,stroke-width:2px,color:#000
-        L1A[BasicBlock<br/>64 channels]
-        L1B[BasicBlock<br/>64 channels]
-        
-        style L1A fill:#a5d6a7,stroke:#66bb6a,color:#000
-        style L1B fill:#a5d6a7,stroke:#66bb6a,color:#000
-    end
-    
-    subgraph Layer2["LAYER 2"]
-        style Layer2 fill:#e8f5e9,stroke:#66bb6a,stroke-width:2px,color:#000
-        L2A[BasicBlock<br/>128 channels]
-        L2B[BasicBlock<br/>128 channels]
-        DS2[Downsample<br/>stride 2]
-        
-        style L2A fill:#a5d6a7,stroke:#66bb6a,color:#000
-        style L2B fill:#a5d6a7,stroke:#66bb6a,color:#000
-        style DS2 fill:#81c784,stroke:#4caf50,color:#000
-    end
-    
-    subgraph Layer3["LAYER 3"]
-        style Layer3 fill:#e8f5e9,stroke:#66bb6a,stroke-width:2px,color:#000
-        L3A[BasicBlock<br/>256 channels]
-        L3B[BasicBlock<br/>256 channels]
-        DS3[Downsample<br/>stride 2]
-        
-        style L3A fill:#a5d6a7,stroke:#66bb6a,color:#000
-        style L3B fill:#a5d6a7,stroke:#66bb6a,color:#000
-        style DS3 fill:#81c784,stroke:#4caf50,color:#000
-    end
-    
-    subgraph Layer4["LAYER 4"]
-        style Layer4 fill:#ffebee,stroke:#ef5350,stroke-width:3px,color:#000
-        L4A[BasicBlock<br/>512 channels]
-        L4B[BasicBlock<br/>512 channels]
-        DS4[Downsample<br/>stride 2]
-        
-        style L4A fill:#ef5350,stroke:#e53935,color:#fff
-        style L4B fill:#ef5350,stroke:#e53935,color:#fff
-        style DS4 fill:#f44336,stroke:#d32f2f,color:#fff
-    end
-    
-    subgraph Head["CUSTOM HEAD"]
-        style Head fill:#fff3e0,stroke:#ff6f00,stroke-width:3px,color:#000
-        GAP[Global<br/>Avg Pool<br/>7×7→1×1]
-        FL[Flatten<br/>512]
-        DO[Dropout<br/>p=0.25]
-        FC[Linear<br/>512→2]
-        OUT((cos θ<br/>sin θ))
-        
-        style GAP fill:#ffb74d,stroke:#ff9800,color:#000
-        style FL fill:#ffa726,stroke:#fb8c00,color:#000
-        style DO fill:#ff9800,stroke:#f57c00,color:#000
-        style FC fill:#ff7043,stroke:#ff5722,color:#fff
-        style OUT fill:#ff5722,stroke:#d84315,color:#fff
-    end
-    
-    I --> C1
-    C1 --> BN1
-    BN1 --> R1
-    R1 --> MP1
-    
-    MP1 --> L1A
-    L1A --> L1B
-    
-    L1B --> L2A
-    L2A --> L2B
-    L2B --> DS2
-    
-    DS2 --> L3A
-    L3A --> L3B
-    L3B --> DS3
-    
-    DS3 --> L4A
-    L4A --> L4B
-    L4B --> DS4
-    
-    DS4 --> GAP
-    GAP --> FL
-    FL --> DO
-    DO --> FC
-    FC --> OUT
-    
-    %% Annotations
-    I -.- A1[Batch × 3 × 224 × 224]:::annot
-    MP1 -.- A2[Batch × 64 × 56 × 56]:::annot
-    DS2 -.- A3[Batch × 128 × 28 × 28]:::annot
-    DS3 -.- A4[Batch × 256 × 14 × 14]:::annot
-    DS4 -.- A5[Batch × 512 × 7 × 7]:::annot
-    FL -.- A6[Batch × 512]:::annot
-    OUT -.- A7[Batch × 2]:::annot
-    
-    classDef annot fill:#f5f5f5,stroke:#9e9e9e,stroke-dasharray: 5 5,color:#000
+## Why predict \((\cos\theta, \sin\theta)\) instead of \(\theta\) directly
+
+Angles are circular. Regressing a scalar in degrees introduces a discontinuity at 0 and 360. This project predicts a point on the unit circle and reconstructs the angle by
+\[
+\hat{\theta} \;=\; \operatorname{atan2}(\hat{s}, \hat{c}) \times \frac{180}{\pi} \bmod 360,
+\]
+where \(\hat{c}\) and \(\hat{s}\) are the network outputs for \(\cos\theta\) and \(\sin\theta\). Training minimizes mean squared error between target and prediction in this two-dimensional space,
+\[
+\mathcal{L} \;=\; \lVert\,\mathbf{y} - \hat{\mathbf{y}}\,\rVert_2^2,\quad \mathbf{y}=[\cos\theta,\sin\theta].
+\]
+Evaluation uses a circular absolute error,
+\[
+\operatorname{CAE}(\hat{\theta},\theta) \;=\; \min\left(\lvert \hat{\theta}-\theta\rvert,\; 360 - \lvert \hat{\theta}-\theta\rvert\right).
+\]
+
+---
+
+## Highlights
+
+- Full 0 to 360 degree orientation estimation using a lightweight ResNet18 head.
+- Trained on 30k COCO images with 6 random rotations each, uniform over \([0, 360)\); final dataset size about 210k samples.
+- Validation mean absolute error \(\approx 4.57^\circ\); median absolute error \(\approx 1.74^\circ\).
+- Robust training loop with early stopping, gradient clipping, and a stepped learning-rate schedule.
+- Comprehensive diagnostics: training curves, error analysis, and Grad-CAM attention maps.
+
+---
+
+
+## Repository structure
+
+```
+.
+├── prepare_data.py            # COCO subset loader and synthetic rotation generator
+├── train_model.py             # Training, evaluation, visualizations, checkpoints
+├── visualizations/            # Generated figures and a JSON training summary
+│   ├── training_history.png
+│   ├── error_analysis.png
+│   ├── gradcam_grid.png
+│   └── training_summary.json
+├── checkpoints/               # Periodic checkpoints during training
+└── rotation_model_best.pth    # Best-scoring model (created after training)
 ```
 
-## Key Features
+---
 
-- **Rotation Range**: Full 0-360° angle detection
-- **Output Representation**: Trigonometric (cos, sin) for continuous circular values
-- **Architecture**: Modified ResNet18 with selective layer unfreezing
-- **Performance**: 4.57° Mean Absolute Error on validation set
-- **Training Time**: ~17 hours on NVIDIA GPU with 210K total samples
-- **Robustness**: Early stopping, gradient clipping, and adaptive learning rate scheduling
+## Data pipeline
 
-## Requirements
+This project builds a synthetic rotation dataset on top of COCO-2017 using FiftyOne.
 
+- Source split: a 30k-image subset of COCO-2017 train.
+- Rotations per image: 6 random angles sampled uniformly in \([0, 360)\).
+- Border handling: **reflect** padding by default. Other strategies exist in the code for experimentation: crop, random background, or alpha mask.
+- Output: a persistent FiftyOne dataset named `coco-2017-rotated`. Rotated images are stored on disk and tagged as `rotated` for filtering and splitting.
+
+Run:
 ```bash
-# Core dependencies
-torch>=2.0.0
-torchvision>=0.15.0
-fiftyone>=0.22.0
-opencv-python>=4.8.0
-numpy>=1.24.0
-matplotlib>=3.7.0
-Pillow>=10.0.0
-tqdm>=4.65.0
-```
-
-## Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/rotation-detection-nn.git
-cd rotation-detection-nn
-
-# Install dependencies
-pip install -r requirements.txt
-```
-
-## Dataset Preparation
-
-The system uses the COCO-2017 dataset with synthetic rotations:
-
-```bash
-# Prepare the rotated dataset
 python prepare_data.py
-
-# Configuration options in prepare_data.py:
-# - SOURCE_DATASET_NAME: "coco-2017-train-30000"
-# - SOURCE_MAX_SAMPLES: 30000 (number of original images)
-# - NUM_ROTATIONS_PER_IMAGE: 6 (augmentation factor)
-# - PADDING_STRATEGY: 'reflect' (options: crop, reflect, random_bg, alpha_mask)
-# - ANGLE_RANGE: (0, 360) (full rotation range)
-# - NUM_WORKERS: 8 (parallel processing)
 ```
 
-This creates a dataset with 209,958 total samples (30,000 original + 179,958 rotated images).
+The final dataset contains roughly 209,958 samples in total, of which 179,958 are rotated. Training uses only the rotated samples and performs an 80 to 20 split into train and validation.
 
-## Training
+---
 
+## Model
+
+- **Backbone**: `torchvision.models.resnet18` pretrained on ImageNet.
+- **Trainable layers**: only `layer4` and the new head are unfrozen, for a total of about 8.4M trainable parameters.
+- **Head**: `Dropout(p=0.25)` followed by a `Linear(512 → 2)` layer that emits \((\cos\theta, \sin\theta)\).
+- **Transforms**: standard ImageNet normalization, with light spatial and photometric augmentation on the training side
+  - `RandomResizedCrop(224, scale=(0.85, 1.0))`
+  - `ColorJitter` with small brightness, contrast, and saturation jitter
+  - Validation uses deterministic resize to \(224\times224\)
+
+---
+
+## Training and evaluation
+
+- **Optimizer**: Adam with learning rate \(1\times 10^{-3}\) and weight decay \(1\times 10^{-4}\).
+- **Schedule**: `StepLR` drops the learning rate by \(10\times\) at epochs 12, 24, and 36.
+- **Batch size**: target 1024 with on-device probing to back off if memory is limited.
+- **Regularization**: gradient clipping with max norm \(1.0\) and dropout in the head.
+- **Early stopping**: patience 5 epochs on validation MAE with a minimum improvement threshold of 0.01.
+- **Metric**: circular mean absolute error (CAE) in degrees, defined above.
+
+Start training:
 ```bash
-# Train the model
 python train_model.py
-
-# Key configuration in train_model.py:
-# - BATCH_SIZE: 1024
-# - NUM_EPOCHS: 50 (with early stopping)
-# - LEARNING_RATE: 0.001
-# - UNFROZEN_LAYERS: ("layer4", "fc")
-# - EARLY_STOPPING_PATIENCE: 5
-# - GRADIENT_CLIP: 1.0
 ```
 
-The training uses a 80/20 train/validation split, resulting in:
-- Training samples: 143,967
-- Validation samples: 35,991
+Artifacts are written to `visualizations/` and `checkpoints/`. The best model is saved as `rotation_model_best.pth`.
 
-## Model Details
-
-### Architecture Modifications
-
-1. **Backbone**: ResNet18 pretrained on ImageNet
-2. **Frozen Layers**: All layers except layer4 and fc
-3. **Custom Head**: 
-   - Dropout (p=0.25)
-   - Linear: 512 → 2 (cos, sin output)
-4. **Trainable Parameters**: 8,394,754 (out of 11.2M total)
-
-### Loss Function
-
-- **Type**: Mean Squared Error (MSE)
-- **Target**: [cos(θ), sin(θ)] representation
-- **Advantages**: 
-  - Continuous representation (no discontinuity at 0°/360°)
-  - Equal weight to all angles
-  - Smooth gradients for optimization
-
-### Training Strategy
-
-1. **Optimizer**: Adam (lr=0.001, weight_decay=1e-4)
-2. **LR Schedule**: StepLR with aggressive decay:
-   - ÷10 at epoch 12 (lr=0.0001)
-   - ÷10 at epoch 24 (lr=0.00001)  
-   - ÷10 at epoch 36 (lr=0.000001)
-3. **Gradient Clipping**: max_norm=1.0
-4. **Early Stopping**: patience=5, min_delta=0.01°
-5. **Batch Size**: 1024 (dynamically adjusted for GPU memory)
-6. **Data Augmentation**: 
-   - RandomResizedCrop (scale=0.85-1.0)
-   - ColorJitter (brightness=0.2, contrast=0.2, saturation=0.2)
+---
 
 ## Results
 
-### Performance Metrics
+**Training summary.** On the 80 to 20 rotated split, early stopping halted at epoch 47. Final metrics were
 
-| Metric | Value |
-|--------|-------|
-| Best Validation MAE | 4.57° |
-| Final Train Loss (MSE) | 0.0049 |
-| Final Validation Loss (MSE) | 0.0199 |
-| Training Time | 17.0 hours |
-| Epochs Completed | 47 (early stopping) |
-| Model Parameters | 8.4M (trainable) |
-| Total Parameters | 11.2M |
+- final train loss (MSE): about `0.0049`
+- final validation loss (MSE): about `0.0199`
+- final and best validation MAE: about `4.57` degrees
 
-### Error Distribution
+A full JSON dump is available at `visualizations/training_summary.json`.
 
-Based on validation set performance:
+**Error distribution.** The error histogram is sharply centered near zero with a heavy tail. Median absolute error is approximately \(1.74^\circ\), and the \(90\)th percentile is approximately \(5.63^\circ\). The cumulative curve shows that roughly \(88.1\%\) of validation samples fall within \(\pm 5^\circ\), \(94.8\%\) within \(\pm 10^\circ\), and \(96.1\%\) within \(\pm 15^\circ\). Rare large errors approach \(180^\circ\), which is expected in images with strong rotational symmetry or minimal orientation cues.
+See `visualizations/error_analysis.png`.
 
-| Percentile | Absolute Error |
-|------------|----------------|
-| 25th | 0.35° |
-| 50th (Median) | 1.74° |
-| 75th | 3.21° |
-| 90th | 5.63° |
-| 95th | 10.53° |
-| 99th | 86.23° |
+**Learning dynamics.** Loss curves show fast initial convergence with clear improvements at each learning-rate step. The train to validation loss ratio remains well below 1 after warm-up, and the validation MAE plateaus once the rate reaches \(1\times 10^{-6}\). See `visualizations/training_history.png`.
 
-### Accuracy Breakdown
+**What the model looks at.** Grad-CAM overlays indicate attention concentrates on structured edges, object contours, and global vanishing lines rather than backgrounds. Typical success cases include natural scenes with clear geometry; typical failure modes arise from nearly rotationally symmetric content or tight crops where border artifacts dominate. See `visualizations/gradcam_grid.png`.
 
-- **Samples within ±5°**: 88.1%
-- **Samples within ±10°**: 94.8%
-- **Samples within ±15°**: 96.1%
+---
 
-## Visualizations
-
-The training script generates comprehensive visualizations:
-
-1. **Training History** (`training_history.png`): 
-   - Loss curves showing convergence
-   - MAE progression over epochs
-   - Learning rate schedule
-   - Overfitting indicator (train/val loss ratio)
-
-2. **Error Analysis** (`error_analysis.png`): 
-   - Error distribution histogram
-   - True vs. predicted angle scatter plot
-   - Error percentiles bar chart
-   - Cumulative error distribution
-   - Detailed error statistics
-
-3. **Grad-CAM Heatmaps** (`gradcam_grid.png`): 
-   - Attention visualization showing model focus areas
-   - Samples from diverse angle ranges
-   - Comparison of predictions vs. ground truth
-
-4. **Training Summary** (`training_summary.json`): 
-   - Final metrics and configuration
-   - Best model checkpoint information
-
-## Model Inference
+## Quick inference example
 
 ```python
 import torch
 from torchvision import transforms
 from PIL import Image
+from train_model import get_model  # uses the same head as training
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Load model
-model = get_model(unfrozen_layers=("layer4", "fc"))
-checkpoint = torch.load("rotation_model_best.pth", map_location="cuda")
-model.load_state_dict(checkpoint['model_state_dict'])
+model = get_model(unfrozen_layers=("layer4","fc")).to(device)
+checkpoint = torch.load("rotation_model_best.pth", map_location=device)
+model.load_state_dict(checkpoint["model_state_dict"])
 model.eval()
 
-# Prepare image
+# Preprocess
 transform = transforms.Compose([
-    transforms.Resize((224, 224)),
+    transforms.Resize((224,224)),
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], 
-                       std=[0.229, 0.224, 0.225])
+    transforms.Normalize(mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225]),
 ])
 
-# Predict rotation
-image = Image.open("test_image.jpg").convert("RGB")
-input_tensor = transform(image).unsqueeze(0).to("cuda")
+img = Image.open("test.jpg").convert("RGB")
+x = transform(img).unsqueeze(0).to(device)
 
 with torch.no_grad():
-    output = model(input_tensor)
-    angle = torch.rad2deg(torch.atan2(output[0, 1], output[0, 0]))
+    y = model(x)[0]                  # [c_hat, s_hat]
+    y = y / (y.norm() + 1e-8)        # optional unit-norm projection
+    angle = torch.rad2deg(torch.atan2(y[1], y[0]))
     angle = (angle + 360) % 360
-    print(f"Predicted rotation: {angle:.1f}°")
+print(f"Predicted rotation: {angle.item():.2f} degrees")
 ```
 
-## Use Cases
+---
 
-- **Image Orientation Correction**: Automatically detect and correct image rotation
-- **Quality Control**: Verify correct orientation in image processing pipelines
-- **Document Processing**: Auto-rotate scanned documents and photos
-- **Computer Vision Research**: Baseline for rotation-invariant algorithms
-- **Photography Applications**: Automatic horizon leveling and composition correction
-- **Industrial Inspection**: Detect misaligned products or components
+## Reproducing the results
 
-## Future Improvements
+1. Install dependencies and ensure COCO-2017 is available via FiftyOne.
+2. Run the data builder:
+   ```bash
+   python prepare_data.py
+   ```
+3. Train the model:
+   ```bash
+   python train_model.py
+   ```
+4. Review outputs in `visualizations/`:
+   - `training_history.png` for loss, MAE, schedule, and an overfitting indicator.
+   - `error_analysis.png` for distributional diagnostics and percentiles.
+   - `gradcam_grid.png` for attention maps.
+   - `training_summary.json` for machine-readable metrics and configuration.
 
-- Extend to handle 3D rotations (pitch, yaw, roll)
-- Implement rotation-invariant feature learning
-- Add support for real-time video processing
-- Explore Vision Transformer architectures
-- Develop mobile-optimized versions
+---
 
-## Contributing
+## Limitations and notes
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+- Training uses only synthetically rotated images; including the original unrotated images as anchors might further stabilize performance near ambiguous angles.
+- The reflect border strategy reduces but does not eliminate rotation artifacts. Results may vary if the target domain exhibits different border statistics.
+- The 99th percentile exhibits a heavy tail due to images with near-rotational symmetry or low texture. For safety-critical applications consider an abstention strategy when the predicted \((\cos\theta,\sin\theta)\) vector has low magnitude, or add a confidence head.
 
-## License
+---
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+## Planned enhancements
 
-## Acknowledgments
+- Add uncertainty estimation via Monte Carlo dropout or an auxiliary confidence head.
+- Explore rotation-invariant features and equivariant architectures.
+- Provide a real-time video demo and a mobile-targeted backbone.
+- Extend to 3D orientation prediction \((\text{roll},\text{pitch},\text{yaw})\) for camera frames.
 
-- COCO dataset team for providing diverse training images
-- PyTorch and torchvision teams for the pretrained models
-- FiftyOne for excellent dataset management tools
-- The computer vision research community for foundational work on rotation estimation
+---
+
+## License and acknowledgments
+
+MIT License. Built with PyTorch, torchvision, and FiftyOne on a COCO-2017 subset. Thanks to the maintainers of these projects for enabling fast prototyping at scale.
+
+
+
+---
+
+## System architecture (Mermaid)
+
+```mermaid
+flowchart LR
+  %% Data preparation
+  subgraph Data
+    A[COCO-2017 subset] --> B[prepare_data.py]
+    B --> C[(FiftyOne dataset<br/>coco-2017-rotated)]
+    C --> D{Split 80/20}
+    D --> E[Train rotated]
+    D --> F[Validation rotated]
+  end
+
+  %% Training
+  subgraph Training
+    E --> G[train_model.py]
+    G --> H[ResNet18 + 2D head<br/>cosθ, sinθ]
+    H --> I[Loss: MSE on unit circle]
+    I --> J[LR schedule, Grad clip,<br/>Early stopping]
+    J --> K[(Checkpoints/epochs)]
+    J --> L[(Best model:<br/>rotation_model_best.pth)]
+  end
+
+  %% Evaluation and visualizations
+  subgraph Evaluation
+    F --> M[Validation loop]
+    L --> M
+    M --> N[Metric: Circular MAE]
+    M --> O[Visualizations]
+    O --> O1[training_history.png]
+    O --> O2[error_analysis.png]
+    O --> O3[gradcam_grid.png]
+    M --> P[(training_summary.json)]
+  end
+
+  %% Inference
+  subgraph Inference
+    Q[Input image] --> R[Preprocess 224×224]
+    R --> L
+    L --> S[(cosθ, sinθ)]
+    S --> T[atan2 → θ° mod 360]
+  end
+```
